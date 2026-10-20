@@ -1,5 +1,5 @@
-> # 🛑 READ [`READ_THIS_FIRST.md`](https://github.com/OdinFANN/personal-ai/blob/karan/mimir-ble-hid/hardware/mimir-phone-agent/READ_THIS_FIRST.md) BEFORE ANYTHING ELSE 🛑
-> Branch `karan/mimir-ble-hid`: Bluetooth HID prototype, partly verified on hardware. The note says what works, how to set up from zero, and where to pick up.
+> # 🛑 READ [`READ_THIS_FIRST.md`](https://github.com/OdinFANN/personal-ai/blob/karan/mimir-phone-home/hardware/mimir-phone-agent/READ_THIS_FIRST.md) BEFORE ANYTHING ELSE 🛑
+> Branch `karan/mimir-phone-home`: Bluetooth HID + phone-home (Wi-Fi + Cloudflare tunnel) prototype. Phone-home firmware never ran on a board. The note says what works, how to set up from zero, and where to pick up.
 
 <div align="center">
 

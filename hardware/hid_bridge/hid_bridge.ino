@@ -25,6 +25,12 @@
 #include "netcfg.h"
 #include "video_link.h"
 #include "src/airplay/airplay.h"
+#ifndef UPLINK
+#define UPLINK 0  // 1: phone-home build, dials the home bridge over wss (uplink.h). Unverified on hardware.
+#endif
+#if UPLINK
+#include "uplink.h"
+#endif
 
 const int STEP = 10;      // max pointer delta per report while moving
 const int STEP_MS = 8;    // report interval; constant pace keeps iOS acceleration predictable
@@ -261,6 +267,9 @@ void setup() {
   esp_task_wdt_add(NULL);
 
   net_begin();
+#if UPLINK
+  uplink_begin();
+#endif
   if (!video_begin()) Serial.println("video: no PSRAM for the GOP buffer");
 #if BLE_HID
   ble_begin("Mimir HID " + board_suffix());  // not "ESP32 Agent ...": Mac bridges scan for that name and grab the board
@@ -297,12 +306,33 @@ void loop() {
     line = Serial.readStringUntil('\n');
     line.trim();
     if (line.startsWith("0 net ")) { net_request(line.substring(6)); Serial.println("0 ok"); return; }
+#if UPLINK
+    if (line.startsWith("0 uplink")) {  // `0 uplink` shows it, `0 uplink <wss url>` sets it, `0 uplink off` clears
+      if (line.length() > 9) uplink_set_url(line.substring(9));
+      Serial.println("0 ok " + uplink_url() + (uplink_connected() ? " connected" : " not connected"));
+      return;
+    }
+#endif
     int sp = line.indexOf(' ');
     String id = sp < 0 ? line : line.substring(0, sp);
     Serial.println(id + " " + board(sp < 0 ? "" : line.substring(sp + 1), id));
     return;
   }
+#if UPLINK
+  uplink_loop();
+  if (uplink_pop_cmd(line)) {  // commands from the home bridge: same "<id> <command>" lines as BLE
+    int sp = line.indexOf(' ');
+    String id = sp < 0 ? line : line.substring(0, sp);
+    String rest = sp < 0 ? "" : line.substring(sp + 1);
+    rest.trim();
+    String reply = board(rest, id);
+    if (reply.length()) uplink_reply(id + " " + reply);
+    return;
+  }
+  if (!ble_pop_cmd(line, 5)) return;  // short wait: the uplink needs the loop turning
+#else
   if (!ble_pop_cmd(line, 50)) return;
+#endif
   int sp = line.indexOf(' ');
   String id = sp < 0 ? line : line.substring(0, sp);
   String rest = sp < 0 ? "" : line.substring(sp + 1);

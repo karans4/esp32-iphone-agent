@@ -3,6 +3,16 @@
 #include <esp_heap_caps.h>
 #include "ble_link.h"
 #include "src/video/gop.h"
+#if UPLINK  // phone-home build: video and replies go to the home bridge when it is connected (uplink.h)
+#include "uplink.h"
+static size_t vroom() { size_t r = uplink_video_room(); return r ? r : ble_video_room(); }
+static bool vsend(const uint8_t *p, size_t n) { return uplink_video_room() ? uplink_video_send(p, n) : ble_video_send(p, n); }
+static void vreply(const String &s) { ble_reply(s); uplink_reply(s); }
+#else
+static size_t vroom() { return ble_video_room(); }
+static bool vsend(const uint8_t *p, size_t n) { return ble_video_send(p, n); }
+static void vreply(const String &s) { ble_reply(s); }
+#endif
 
 // GOP since the latest IDR; overflow drops it until the next IDR. A still screen gets an IDR only every
 // few minutes, so room for ~27 min of AUs at 5 fps (P-frames of a still screen are tiny).
@@ -31,12 +41,12 @@ static volatile float statFps;
 
 // One access unit as notifies. A failed chunk still consumes its seq, so the app sees a gap.
 static bool sendAu(const uint8_t *p, size_t n, uint8_t flags, uint32_t ts) {
-  size_t room = min(ble_video_room(), MAX_CHUNK);
+  size_t room = min(vroom(), MAX_CHUNK);
   if (room < 5) return false;
   vchunk c;
   vchunk_begin(&c, p, n, flags, ts);
   for (size_t len; (len = vchunk_next(&c, chunk, room, seq)) > 0;) {
-    bool ok = ble_video_send(chunk, len);
+    bool ok = vsend(chunk, len);
     seq++;
     if (!ok) return false;
   }
@@ -69,7 +79,7 @@ static bool snapshot(uint32_t *gen, int *n, uint8_t *cfg, size_t *cfg_len, uint3
 
 static String doSnap() {
   static uint8_t cfg[GOP_CFG_MAX];
-  if (!ble_video_room()) return "err video not subscribed";
+  if (!vroom()) return "err video not subscribed";
   for (int attempt = 0; attempt < 3; attempt++) {
     uint32_t gen, cfg_ts;
     size_t cfg_len;
@@ -88,7 +98,7 @@ static String doSnap() {
 }
 
 static String doBench(uint32_t kb) {
-  size_t room = min(ble_video_room(), MAX_CHUNK);
+  size_t room = min(vroom(), MAX_CHUNK);
   if (!room) return "err video not subscribed";
   uint32_t start = millis();
   memset(chunk + VCHUNK_HDR, 0xA5, room);
@@ -97,7 +107,7 @@ static String doBench(uint32_t kb) {
     chunk[0] = (uint8_t)seq;
     chunk[1] = (uint8_t)(seq >> 8);
     chunk[2] = VF_BENCH;
-    bool ok = ble_video_send(chunk, VCHUNK_HDR + n);
+    bool ok = vsend(chunk, VCHUNK_HDR + n);
     seq++;
     if (!ok) return "err ble send failed";
     left -= n;
@@ -112,7 +122,7 @@ static void streamStep() {
   static uint32_t txGen = UINT32_MAX;
   static int next;
   static uint8_t cfg[GOP_CFG_MAX];
-  if (!streaming || !ble_video_room()) {
+  if (!streaming || !vroom()) {
     txGen = UINT32_MAX;  // resend config + whole GOP when streaming resumes
     return;
   }
@@ -137,7 +147,7 @@ static void videoTask(void *) {
 #if DEBUG_SERIAL
       Serial.println("video: " + reply);  // the reply only goes over BLE; mirror it for serial-driven tests
 #endif
-      ble_reply(reply);
+      vreply(reply);
     }
     streamStep();
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
@@ -187,7 +197,7 @@ void video_stream(bool on) { streaming = on; }
 static void request(const String &id, bool bench, uint32_t kb) {
   Req r = {{0}, kb, bench};
   strncpy(r.id, id.c_str(), sizeof r.id - 1);
-  if (xQueueSend(reqs, &r, 0) != pdTRUE) ble_reply(id + " err busy");
+  if (xQueueSend(reqs, &r, 0) != pdTRUE) vreply(id + " err busy");
 }
 
 void video_snap(const String &id) { request(id, false, 0); }
