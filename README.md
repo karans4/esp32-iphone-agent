@@ -1,3 +1,6 @@
+> # 🛑 READ [`READ_THIS_FIRST.md`](https://github.com/OdinFANN/personal-ai/blob/karan/mimir-ble-hid/hardware/mimir-phone-agent/READ_THIS_FIRST.md) BEFORE ANYTHING ELSE 🛑
+> Branch `karan/mimir-ble-hid`: Bluetooth HID prototype, partly verified on hardware. The note says what works, how to set up from zero, and where to pick up.
+
 <div align="center">
 
 <img src="docs/images/logo.png" alt="ESP32 Agent logo" width="160">

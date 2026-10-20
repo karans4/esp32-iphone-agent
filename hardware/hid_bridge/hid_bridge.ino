@@ -9,11 +9,18 @@
 
 #include <esp_task_wdt.h>
 #include <esp_mac.h>
+#ifndef BLE_HID
+#define BLE_HID 0  // 1: the phone's Bluetooth mouse + keyboard (ble_hid.h) instead of USB; no cable to the phone
+#endif
+#if BLE_HID
+#include "ble_hid.h"
+#else
 #include "USB.h"
 #include "USBHIDMouse.h"
 #include "USBHIDKeyboard.h"
 #include "USBHIDConsumerControl.h"
 #include "tusb.h"
+#endif
 #include "ble_link.h"
 #include "netcfg.h"
 #include "video_link.h"
@@ -28,9 +35,15 @@ const int HOME_REPORTS = 50;
 
 const int WATCHDOG_MS = 8000;  // a hung loop (e.g. blocked USB) reboots the board instead of staying offline
 
+#if BLE_HID
+BleMouse mouse;
+BleKeyboard keyboard;
+BleConsumer consumer;
+#else
 USBHIDMouse mouse;
 USBHIDKeyboard keyboard;
 USBHIDConsumerControl consumer;
+#endif
 const uint16_t AC_HOME = 0x0223;  // HID consumer page: AC Home
 static String receiverName = "ESP32 Agent";
 
@@ -76,11 +89,15 @@ bool pressCombo(String combo) {
 // A locked or sleeping phone suspends USB; sending HID reports then can stall. Ask it to wake up instead,
 // and report "asleep" right away if it does not, so the board never hangs.
 bool usbReady() {
+#if BLE_HID
+  return ble_hid_ready();
+#else
   if (tud_suspended()) {
     tud_remote_wakeup();
     for (int i = 0; i < 50 && tud_suspended(); i++) delay(10);
   }
   return tud_mounted() && !tud_suspended();
+#endif
 }
 
 String run(const String &line) {
@@ -91,7 +108,7 @@ String run(const String &line) {
   sscanf(arg.c_str(), "%ld %ld", &a, &b);
 
   if (cmd == "ping") return "ok";
-  if (!usbReady()) return "err phone usb asleep (unlock the phone)";
+  if (!usbReady()) return BLE_HID ? "err phone not connected over bluetooth" : "err phone usb asleep (unlock the phone)";
   if (cmd == "home") {  // slam the pointer into the top-left corner
     for (int i = 0; i < HOME_REPORTS; i++) { mouse.move(-127, -127); delay(2); }
     return "ok";
@@ -120,8 +137,12 @@ const char *resetReason() {
 }
 
 const char *usbState() {
+#if BLE_HID
+  return ble_hid_ready() ? "ok" : "off";
+#else
   if (!tud_mounted()) return "off";
   return tud_suspended() ? "asleep" : "ok";
+#endif
 }
 
 // Board-level commands from the app; everything else is an HID command for run().
@@ -162,6 +183,9 @@ String board(const String &line, const String &id) {
     if (arg.length() && !net_coex(arg)) return "err usage: coex bt|balance|wifi";
     return String("ok ") + net_coex_mode();
   }
+#if BLE_HID
+  if (cmd == "hid") return ble_hid_info();
+#endif
   if (cmd == "unpair") {
     ble_reply(id + " ok");  // answer before the link goes down
     ble_unpair();
@@ -225,18 +249,27 @@ void setup() {
 #if DEBUG_SERIAL
   for (int i = 0; i < 30 && !Serial; i++) delay(100);  // give a serial monitor 3 s to catch the boot lines
 #endif
+#if !BLE_HID
   mouse.begin();
   keyboard.begin();
   consumer.begin();
   USB.productName("HID Bridge");
   USB.begin();
+#endif
   esp_task_wdt_config_t wdt = {.timeout_ms = WATCHDOG_MS, .idle_core_mask = 0, .trigger_panic = true};
   esp_task_wdt_reconfigure(&wdt);
   esp_task_wdt_add(NULL);
 
   net_begin();
   if (!video_begin()) Serial.println("video: no PSRAM for the GOP buffer");
+#if BLE_HID
+  ble_begin("Mimir HID " + board_suffix());  // not "ESP32 Agent ...": Mac bridges scan for that name and grab the board
+#else
   ble_begin("ESP32 Agent " + board_suffix());
+#endif
+#if BLE_HID
+  ble_hid_begin();
+#endif
   startAirplay();
   xTaskCreatePinnedToCore(statusTask, "status", 4096, NULL, 1, NULL, 1);
   Serial.printf("boot %s: free internal heap %u (largest %u), PSRAM %u, reset %s\n", receiverName.c_str(),
@@ -249,6 +282,9 @@ void loop() {
   static bool linked = false;
   esp_task_wdt_reset();
   net_poll();
+#if BLE_HID
+  ble_drop_unencrypted();
+#endif
   if (linked && !ble_connected()) {
     mouse.release(MOUSE_LEFT);  // a gesture cut off mid-way must not leave the button held (long press)
     keyboard.releaseAll();

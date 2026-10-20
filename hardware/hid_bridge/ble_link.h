@@ -19,3 +19,8 @@ uint32_t ble_kbps();     // video bytes out, last second
 uint32_t ble_drops();    // video notifies we failed to send
 uint32_t ble_reply_drops();  // replies that never got out to a subscribed peer
 int ble_peers();         // connected centrals
+
+#if BLE_HID
+void ble_drop_unencrypted();  // call from loop(): cuts centrals that never paired (see ble_link.cpp)
+bool ble_is_cmd_peer(uint16_t conn);  // this connection takes commands (app / Mac bridge), not HID reports
+#endif

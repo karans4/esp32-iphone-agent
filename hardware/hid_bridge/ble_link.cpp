@@ -107,9 +107,39 @@ static void tuneLink(uint16_t h) {
   server->updateConnParams(h, 12, 12, 0, 400);
 }
 
+#if BLE_HID
+// BLE HID build: the phone pairs from its own Settings; a Mac running the bridge pairs too (it reads the
+// encrypted `net` characteristic). A central that has not encrypted within ENC_GRACE_MS is dropped, so a
+// stranger in range cannot drive the phone.
+const uint32_t ENC_GRACE_MS = 10000;
+static volatile uint32_t connAt[MAX_PEERS];
+bool ble_is_cmd_peer(uint16_t h) {  // subscribed to command replies: the app or a Mac bridge, never the HID host
+  int i = slotOf(h);
+  return i >= 0 && subscribed[i][CH_REPLY];
+}
+
+void ble_drop_unencrypted() {
+  for (int i = 0; i < MAX_PEERS; i++) {
+    int h = peers[i];
+    if (h < 0 || millis() - connAt[i] < ENC_GRACE_MS) continue;
+    NimBLEConnInfo ci = server->getPeerInfoByHandle((uint16_t)h);
+    if (!ci.isEncrypted()) {
+      Serial.printf("ble: dropping unencrypted conn %d (%s)\n", h, ci.getAddress().toString().c_str());
+      server->disconnect((uint16_t)h);
+      connAt[i] = millis();  // one disconnect request per grace period
+    }
+  }
+}
+#endif
+
 class ServerCb : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *s, NimBLEConnInfo &ci) override {
+#if BLE_HID
+#endif
     if (slotFor(ci.getConnHandle()) < 0) { s->disconnect(ci.getConnHandle()); return; }
+#if BLE_HID
+    connAt[slotOf(ci.getConnHandle())] = millis();
+#endif
     logConn("connect", ci);
     tuneLink(ci.getConnHandle());
     if (peerCount() < MAX_PEERS) NimBLEDevice::startAdvertising();  // room for the debug harness
@@ -128,7 +158,9 @@ class ServerCb : public NimBLEServerCallbacks {
   void onPhyUpdate(NimBLEConnInfo &ci, uint8_t tx, uint8_t rx) override {
     BLE_LOG("conn %u: phy tx %uM rx %uM\n", ci.getConnHandle(), tx, rx);
   }
-  void onAuthenticationComplete(NimBLEConnInfo &ci) override { logConn("security", ci); }
+  void onAuthenticationComplete(NimBLEConnInfo &ci) override {
+    logConn("security", ci);
+  }
 };
 
 class CharCb : public NimBLECharacteristicCallbacks {
